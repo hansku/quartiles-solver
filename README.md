@@ -3,74 +3,116 @@
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
 
-**Quartiles Solver** is a powerful, automated tool designed to crack the "Quartiles" word puzzle game. Whether you're stuck on a tricky day or just want to see the magic of combinatorics in action, this solver has you covered.
+**Quartiles Solver** is a simple, effective tool for solving Quartiles word puzzles. It finds all valid word combinations from puzzle tiles using the TWL06 dictionary with minimal filtering to prioritize finding all valid words over avoiding false positives.
+
+> **Note**: This project was vibe coded - developed iteratively with a focus on simplicity and user feedback rather than over-engineering. The code prioritizes clarity and maintainability.
 
 ## ✨ Features
 
-- **📸 Image Recognition**: Simply feed it a screenshot of the puzzle, and it uses Tesseract OCR to read the tiles automatically.
-- **🧹 Smart Noise Filtering**: Uses confidence scores to automatically filter out UI elements and visual artifacts (like 'ey').
-- **📚 Tournament-Grade Dictionary**: Powered by the **TWL06** (Tournament Word List) dictionary to ensure every found word is legitimate.
-- **⚡️ Blazing Fast**: efficiently generates and checks thousands of permutations in milliseconds.
-- **🔍 Side-by-Side Comparison**: (Optional) Can be configured to check against multiple dictionaries to find even the most obscure words.
+- **📸 Image Recognition**: Automatically extracts tiles from screenshots using Tesseract OCR
+- **👁️ Visual Tile Grid**: Displays extracted tiles in a grid layout for easy verification
+- **📚 TWL06 Dictionary**: Uses the Tournament Word List for comprehensive word validation
+- **🎯 Minimal Filtering**: Only excludes profanity - shows all valid dictionary words for human review
+- **📊 Aligned Output**: Results are formatted with aligned '=' signs for easy scanning
+- **⚡ Fast**: Generates and validates thousands of tile combinations quickly
 
 ## 🚀 Installation
 
 ### Prerequisites
 
-1.  **Python 3.8+**: Make sure you have Python installed.
-2.  **Tesseract OCR (v4.0+)**: Required for image recognition and TSV output.
-    -   **macOS**: `brew install tesseract`
-    -   **Ubuntu**: `sudo apt-get install tesseract-ocr`
-    -   **Windows**: [Download Installer](https://github.com/UB-Mannheim/tesseract/wiki)
+1. **Python 3.8+**: Make sure you have Python installed
+2. **Tesseract OCR**: Required for image recognition
+   - **macOS**: `brew install tesseract`
+   - **Ubuntu**: `sudo apt-get install tesseract-ocr`
+   - **Windows**: [Download Installer](https://github.com/UB-Mannheim/tesseract/wiki)
 
 ### Setup
 
-1.  Clone the repository:
-    ```bash
-    git clone https://github.com/hansku/quartiles-solver.git
-    cd quartiles-solver
-    ```
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/hansku/quartiles-solver.git
+   cd quartiles-solver
+   ```
 
-2.  (Optional) Create a virtual environment:
-    ```bash
-    python3 -m venv venv
-    source venv/bin/activate
-    ```
+2. (Optional) Create a virtual environment:
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate
+   ```
 
-## 🎮 How to Use
+The dictionary (TWL06) will be automatically downloaded on first run.
 
-### 1. The Easy Way (Image Input)
+## 🎮 Usage
 
-Take a screenshot of your Quartiles puzzle (crop it to just the tiles if possible for best results) and save it as `tiles.png`.
+### Image Input (Recommended)
 
-Run the solver:
+Take a screenshot of your Quartiles puzzle (crop to just the tiles for best results) and save it as `tiles.png`:
 
 ```bash
 python3 tiles.py tiles.png
 ```
 
 The script will:
-1.  Read the tiles from the image.
-2.  Download the dictionary (first run only).
-3.  Print all valid 1, 2, 3, and 4-tile combinations!
+1. Extract tiles from the image using OCR
+2. Display tiles in a grid for visual verification
+3. Find all valid word combinations (1-4 tiles)
+4. Show results with aligned formatting for easy scanning
 
-### 2. The Manual Way (Demo Mode)
+### Manual Tile Input
 
-If you don't provide an image, the script runs in demo mode with a default set of tiles:
+If OCR doesn't work well, you can manually specify tiles:
 
 ```bash
-python3 tiles.py
+python3 tiles.py --tiles cli ta ous ci sul ni con da
 ```
+
+### Options
+
+- `--min-length N`: Minimum word length (default: 2, includes valid 2-letter words)
+- `--ocr-psm N`: Tesseract PSM mode (default: 6, try 4 or 11 if tiles are misread)
+- `--tiles TILE ...`: Manually specify tiles (space-separated)
+
+### Example Output
+
+```
+Found 20 tiles:
+
+  cli       ta        ous       ci      
+  sul       ni        con       da      
+  nt        wat       aut       lly     
+  ate       wri       men       st      
+  ca        tic       ch        hen     
+
+--- 2 Tile Combinations ---
+ca + nt   = cant
+ca + st   = cast
+ci + st   = cist
+cli + tic = clitic
+con + ch  = conch
+...
+```
+
+## 🎯 Design Philosophy
+
+This solver prioritizes **recall over precision** - it's better to show all valid words and let you decide what's in the puzzle than to miss valid words by over-filtering. The approach:
+
+- **Minimal filtering**: Only excludes obvious profanity
+- **Human-in-the-loop**: Shows all valid dictionary words for your review
+- **Visual verification**: Grid display helps catch OCR errors early
+- **Simple and maintainable**: Clean code without unnecessary complexity
+
+Words marked with `[abbreviation]` are short all-consonant words that might need review, but they're still shown to avoid false negatives.
+
+## 📝 Notes
+
+- The solver uses TWL06 (Tournament Word List) which includes many valid words that Quartiles may not accept (proper nouns, obscure terms, etc.)
+- Some words in the output may not be valid in Quartiles - this is intentional to avoid missing valid words
+- If tiles look incorrect, try different `--ocr-psm` modes or use `--tiles` to specify manually
+- The dictionary is downloaded automatically on first run (~178k words)
 
 ## 🤝 Contributing
 
-Got a better dictionary? Found a bug in the OCR? Pull requests are welcome!
-
-1.  Fork the repo.
-2.  Create a new branch (`git checkout -b feature/amazing-feature`).
-3.  Commit your changes.
-4.  Push to the branch.
-5.  Open a Pull Request.
+Pull requests welcome! This is a vibe-coded project, so keep it simple and focused.
 
 ## 📄 License
 

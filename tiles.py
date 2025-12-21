@@ -3,6 +3,9 @@ Quartiles Solver
 
 Solves Quartiles word puzzles by finding valid word combinations from tiles.
 Uses TWL06 dictionary with minimal filtering to avoid false negatives.
+
+Note: This was vibe coded - developed iteratively with a focus on simplicity
+and user feedback rather than over-engineering.
 """
 
 import argparse
