@@ -11,7 +11,7 @@
 
 - **📸 Image Recognition**: Automatically extracts tiles from screenshots using Tesseract OCR
 - **👁️ Visual Tile Grid**: Displays extracted tiles in a grid layout for easy verification
-- **📚 TWL06 Dictionary**: Uses the Tournament Word List for comprehensive word validation
+- **📚 Multiple Dictionaries**: Choose from TWL06 (default), ENABLE, or use both for maximum coverage
 - **🎯 Minimal Filtering**: Only excludes profanity - shows all valid dictionary words for human review
 - **📊 Aligned Output**: Results are formatted with aligned '=' signs for easy scanning
 - **⚡ Fast**: Generates and validates thousands of tile combinations quickly
@@ -40,7 +40,7 @@
    source venv/bin/activate
    ```
 
-The dictionary (TWL06) will be automatically downloaded on first run.
+Dictionaries will be automatically downloaded on first use.
 
 ## 🎮 Usage
 
@@ -71,6 +71,10 @@ python3 tiles.py --tiles cli ta ous ci sul ni con da
 - `--min-length N`: Minimum word length (default: 2, includes valid 2-letter words)
 - `--ocr-psm N`: Tesseract PSM mode (default: 6, try 4 or 11 if tiles are misread)
 - `--tiles TILE ...`: Manually specify tiles (space-separated)
+- `--dict {twl06,enable,both}`: Dictionary to use (default: twl06)
+  - `twl06`: Tournament Word List 2006 (178k words, standard for North American tournaments)
+  - `enable`: Enhanced North American Basic Lexicon (173k words, alternative word list)
+  - `both`: Union of both dictionaries (maximum word coverage)
 
 ### Example Output
 
@@ -105,10 +109,14 @@ Words marked with `[abbreviation]` are short all-consonant words that might need
 
 ## 📝 Notes
 
-- The solver uses TWL06 (Tournament Word List) which includes many valid words that Quartiles may not accept (proper nouns, obscure terms, etc.)
+- **Dictionary Options**: 
+  - `twl06` (default): Tournament Word List 2006, standard for North American tournaments (~178k words)
+  - `enable`: Enhanced North American Basic Lexicon, alternative comprehensive list (~173k words)
+  - `both`: Combines both dictionaries for maximum coverage
+- The dictionaries include many valid words that Quartiles may not accept (proper nouns, obscure terms, etc.)
 - Some words in the output may not be valid in Quartiles - this is intentional to avoid missing valid words
 - If tiles look incorrect, try different `--ocr-psm` modes or use `--tiles` to specify manually
-- The dictionary is downloaded automatically on first run (~178k words)
+- Dictionaries are downloaded automatically on first use
 
 ## 🤝 Contributing
 

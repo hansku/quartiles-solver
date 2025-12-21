@@ -21,24 +21,42 @@ DEFAULT_TILES = [
     "la", "te", "jou", "rn", "al", "ing", "aft", "er", "tho", "ught"
 ]
 
-DICTIONARY_URL = 'https://raw.githubusercontent.com/jessicatysu/scrabble/master/TWL06.txt'
-DICTIONARY_FILENAME = 'twl06.txt'
+DICTIONARIES = {
+    'twl06': {
+        'url': 'https://raw.githubusercontent.com/jessicatysu/scrabble/master/TWL06.txt',
+        'filename': 'twl06.txt',
+        'name': 'TWL06 (Tournament Word List 2006)',
+        'description': 'Standard North American tournament word list, 178k words'
+    },
+    'enable': {
+        'url': 'https://raw.githubusercontent.com/dolph/dictionary/master/enable1.txt',
+        'filename': 'enable1.txt',
+        'name': 'ENABLE',
+        'description': 'Enhanced North American Basic Lexicon, 173k words'
+    }
+}
 
 
-def load_dictionary() -> Set[str]:
-    if not os.path.exists(DICTIONARY_FILENAME):
-        print(f"Downloading dictionary from {DICTIONARY_URL}...")
+def load_dictionary(dict_name: str) -> Set[str]:
+    if dict_name not in DICTIONARIES:
+        return set()
+    
+    dict_info = DICTIONARIES[dict_name]
+    filename = dict_info['filename']
+    
+    if not os.path.exists(filename):
+        print(f"Downloading {dict_info['name']} from {dict_info['url']}...")
         try:
-            urllib.request.urlretrieve(DICTIONARY_URL, DICTIONARY_FILENAME)
+            urllib.request.urlretrieve(dict_info['url'], filename)
         except Exception as e:
             print(f"Error: Failed to download dictionary: {e}")
             return set()
 
     try:
-        with open(DICTIONARY_FILENAME, 'r') as f:
+        with open(filename, 'r') as f:
             return set(word.strip().lower() for word in f if len(word.strip()) >= 2)
     except FileNotFoundError:
-        print(f"Error: Dictionary file '{DICTIONARY_FILENAME}' not found.")
+        print(f"Error: Dictionary file '{filename}' not found.")
         return set()
 
 
@@ -143,6 +161,8 @@ def main():
                        help='Manually specify tiles (space-separated). Overrides image extraction.')
     parser.add_argument('--ocr-psm', type=int, default=6, choices=[4, 6, 11],
                        help='Tesseract PSM mode: 6=uniform block (default), 4=single column, 11=sparse text')
+    parser.add_argument('--dict', type=str, default='twl06', choices=['twl06', 'enable', 'both'],
+                       help='Dictionary to use: twl06 (default), enable, or both (union of both)')
     args = parser.parse_args()
 
     if args.tiles:
@@ -172,12 +192,26 @@ def main():
         tiles = DEFAULT_TILES
 
     print("Loading dictionary...")
-    all_words = load_dictionary()
-    if not all_words:
-        print("Error: Could not load TWL06 dictionary. Exiting.")
-        sys.exit(1)
+    if args.dict == 'both':
+        words1 = load_dictionary('twl06')
+        words2 = load_dictionary('enable')
+        if not words1 and not words2:
+            print("Error: Could not load dictionaries. Exiting.")
+            sys.exit(1)
+        all_words = words1 | words2
+        dict_names = []
+        if words1:
+            dict_names.append(f"{DICTIONARIES['twl06']['name']} ({len(words1)} words)")
+        if words2:
+            dict_names.append(f"{DICTIONARIES['enable']['name']} ({len(words2)} words)")
+        print(f"Loaded {len(all_words)} words from {' + '.join(dict_names)}.")
+    else:
+        all_words = load_dictionary(args.dict)
+        if not all_words:
+            print(f"Error: Could not load {DICTIONARIES[args.dict]['name']} dictionary. Exiting.")
+            sys.exit(1)
+        print(f"Loaded {len(all_words)} words from {DICTIONARIES[args.dict]['name']}.")
     
-    print(f"Loaded {len(all_words)} words from TWL06.")
     print("Applying minimal filter (only profanity excluded)...")
     valid_words = filter_words(all_words)
     print(f"Using {len(valid_words)} words.")
