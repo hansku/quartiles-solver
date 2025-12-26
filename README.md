@@ -1,100 +1,131 @@
 # Quartiles Solver 🧩
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Python](https://img.shields.io/badge/python-3.8%2B-blue)
+![Next.js](https://img.shields.io/badge/next.js-14-black)
+![TypeScript](https://img.shields.io/badge/typescript-5-blue)
 
-**Quartiles Solver** is a simple, effective tool for solving Quartiles word puzzles. It finds all valid word combinations from puzzle tiles using the TWL06 dictionary with minimal filtering to prioritize finding all valid words over avoiding false positives.
+**Quartiles Solver** is a web application for solving Quartiles word puzzles. It finds all valid word combinations from puzzle tiles using the TWL06 or ENABLE dictionaries with minimal filtering to prioritize finding all valid words over avoiding false positives.
 
-> **Note**: This project was vibe coded - developed iteratively with a focus on simplicity and user feedback rather than over-engineering. The code prioritizes clarity and maintainability.
+🌐 **Live Demo**: [Deploy to Vercel](#-deployment)
 
 ## ✨ Features
 
-- **📸 Image Recognition**: Automatically extracts tiles from screenshots using Tesseract OCR
+- **📸 Image Recognition**: Automatically extracts tiles from screenshots using Tesseract.js OCR (client-side)
 - **👁️ Visual Tile Grid**: Displays extracted tiles in a grid layout for easy verification
 - **📚 Multiple Dictionaries**: Choose from TWL06 (default), ENABLE, or use both for maximum coverage
 - **🎯 Minimal Filtering**: Only excludes profanity - shows all valid dictionary words for human review
 - **📊 Aligned Output**: Results are formatted with aligned '=' signs for easy scanning
 - **⚡ Fast**: Generates and validates thousands of tile combinations quickly
+- **🌐 Web-Based**: No installation required - works in your browser
 
-## 🚀 Installation
+## 🚀 Quick Start
 
-### Prerequisites
+### Local Development
 
-1. **Python 3.8+**: Make sure you have Python installed
-2. **Tesseract OCR**: Required for image recognition
-   - **macOS**: `brew install tesseract`
-   - **Ubuntu**: `sudo apt-get install tesseract-ocr`
-   - **Windows**: [Download Installer](https://github.com/UB-Mannheim/tesseract/wiki)
-
-### Setup
-
-1. Clone the repository:
+1. **Clone the repository:**
    ```bash
    git clone https://github.com/hansku/quartiles-solver.git
    cd quartiles-solver
    ```
 
-2. (Optional) Create a virtual environment:
+2. **Install dependencies:**
    ```bash
-   python3 -m venv venv
-   source venv/bin/activate
+   npm install
    ```
 
-Dictionaries will be automatically downloaded on first use.
+3. **Run the development server:**
+   ```bash
+   npm run dev
+   ```
+
+4. **Open your browser:**
+   Navigate to [http://localhost:3000](http://localhost:3000)
+
+### Build for Production
+
+```bash
+npm run build
+npm start
+```
+
+## 🌐 Deployment
+
+### Deploy to Vercel (Recommended)
+
+This project is configured for easy deployment on Vercel:
+
+1. **Push to GitHub:**
+   ```bash
+   git add .
+   git commit -m "Ready for deployment"
+   git push origin main
+   ```
+
+2. **Deploy on Vercel:**
+   - Go to [vercel.com](https://vercel.com)
+   - Click "New Project"
+   - Import your GitHub repository
+   - Vercel will automatically detect Next.js and configure the build
+   - Click "Deploy"
+
+3. **That's it!** Your app will be live in seconds.
+
+The project includes:
+- ✅ `vercel.json` configuration
+- ✅ Next.js 14 with App Router
+- ✅ TypeScript configuration
+- ✅ Optimized for serverless deployment
+
+### Manual Deployment
+
+If you prefer to deploy manually:
+
+```bash
+# Build the project
+npm run build
+
+# The output will be in the .next directory
+# Deploy the .next directory to your hosting provider
+```
 
 ## 🎮 Usage
 
 ### Image Input (Recommended)
 
-Take a screenshot of your Quartiles puzzle (crop to just the tiles for best results) and save it as `tiles.png`:
-
-```bash
-python3 tiles.py tiles.png
-```
-
-The script will:
-1. Extract tiles from the image using OCR
-2. Display tiles in a grid for visual verification
-3. Find all valid word combinations (1-4 tiles)
-4. Show results with aligned formatting for easy scanning
+1. Take a screenshot of your Quartiles puzzle (crop to just the tiles for best results)
+2. Click "Choose Image" and select your screenshot
+3. The app will automatically extract tiles using OCR
+4. Review the extracted tiles in the grid
+5. Adjust PSM mode if tiles are misread (try PSM 4, 6, or 11)
+6. Click "Solve Puzzle" to find all valid word combinations
 
 ### Manual Tile Input
 
 If OCR doesn't work well, you can manually specify tiles:
 
-```bash
-python3 tiles.py --tiles cli ta ous ci sul ni con da
-```
+1. Enter tiles in the "Or Enter Tiles Manually" field (space-separated)
+2. Click "Set" or press Enter
+3. Review the tiles in the grid
+4. Click "Solve Puzzle"
 
 ### Options
 
-- `--min-length N`: Minimum word length (default: 2, includes valid 2-letter words)
-- `--ocr-psm N`: Tesseract PSM mode (default: 6, try 4 or 11 if tiles are misread)
-- `--tiles TILE ...`: Manually specify tiles (space-separated)
-- `--dict {twl06,enable,both}`: Dictionary to use (default: twl06)
+- **Dictionary**: Choose TWL06, ENABLE, or both
   - `twl06`: Tournament Word List 2006 (178k words, standard for North American tournaments)
   - `enable`: Enhanced North American Basic Lexicon (173k words, alternative word list)
   - `both`: Union of both dictionaries (maximum word coverage)
+- **Minimum Word Length**: Adjust the slider to filter out shorter words (default: 2)
+- **PSM Mode**: Tesseract OCR page segmentation mode
+  - PSM 6: Uniform block (default, best for grid layouts)
+  - PSM 4: Single column (try if tiles are in a column)
+  - PSM 11: Sparse text (try if tiles are scattered)
 
 ### Example Output
 
-```
-Found 20 tiles:
-
-  cli       ta        ous       ci      
-  sul       ni        con       da      
-  nt        wat       aut       lly     
-  ate       wri       men       st      
-  ca        tic       ch        hen     
-
---- 2 Tile Combinations ---
-ca + nt   = cant
-ca + st   = cast
-ci + st   = cist
-cli + tic = clitic
-con + ch  = conch
-...
-```
+The results are organized by number of tiles used (1-4) and show:
+- Tile combinations (e.g., `ca + nt`)
+- Resulting word (e.g., `cant`)
+- Tags for words that may need review (e.g., `[abbreviation]`)
 
 ## 🎯 Design Philosophy
 
@@ -107,16 +138,21 @@ This solver prioritizes **recall over precision** - it's better to show all vali
 
 Words marked with `[abbreviation]` are short all-consonant words that might need review, but they're still shown to avoid false negatives.
 
-## 📝 Notes
+## 📝 Technical Details
 
-- **Dictionary Options**: 
-  - `twl06` (default): Tournament Word List 2006, standard for North American tournaments (~178k words)
-  - `enable`: Enhanced North American Basic Lexicon, alternative comprehensive list (~173k words)
-  - `both`: Combines both dictionaries for maximum coverage
-- The dictionaries include many valid words that Quartiles may not accept (proper nouns, obscure terms, etc.)
-- Some words in the output may not be valid in Quartiles - this is intentional to avoid missing valid words
-- If tiles look incorrect, try different `--ocr-psm` modes or use `--tiles` to specify manually
-- Dictionaries are downloaded automatically on first use
+### Architecture
+
+- **Frontend**: Next.js 14 with React and TypeScript
+- **OCR**: Tesseract.js (client-side, no server required)
+- **Styling**: Tailwind CSS
+- **Dictionary Loading**: Fetched from GitHub repositories with caching
+
+### Dictionary Sources
+
+- **TWL06**: [Tournament Word List 2006](https://github.com/jessicatysu/scrabble/blob/master/TWL06.txt)
+- **ENABLE**: [Enhanced North American Basic Lexicon](https://github.com/dolph/dictionary/blob/master/enable1.txt)
+
+Dictionaries are loaded on-demand and cached in memory for performance.
 
 ## 🤝 Contributing
 
