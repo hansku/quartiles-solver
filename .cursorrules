@@ -1,0 +1,76 @@
+# Cursor Rules for Quartiles Solver
+
+## Critical Development Principles
+
+### NO WORKAROUNDS, NO FALLBACKS, NO HARDCODED SOLUTIONS
+
+**This is the most important rule for this codebase.**
+
+When fixing bugs or improving OCR accuracy:
+- ❌ **DO NOT** add post-processing corrections for specific misreads
+- ❌ **DO NOT** add hardcoded mappings or character substitutions (e.g., `'olg' -> 'br'`)
+- ❌ **DO NOT** add fallback logic that masks root causes
+- ❌ **DO NOT** add substring extraction or truncation workarounds
+- ✅ **DO** fix the root cause: improve preprocessing, OCR parameters, or image quality
+- ✅ **DO** improve actual OCR accuracy rather than patching results
+- ✅ **DO** improve region detection, scaling, or preprocessing algorithms
+
+If OCR misreads characters, the solution is to improve the OCR pipeline (preprocessing, scaling, PSM modes, region detection, etc.), not to add workarounds that hide the problem.
+
+## Project Context
+
+This is a Quartiles word puzzle solver that:
+- Uses Tesseract.js for client-side OCR to extract tiles from images
+- Processes tiles in a 5x4 grid (20 tiles total)
+- Finds valid word combinations using TWL06/ENABLE dictionaries
+- Prioritizes recall over precision (show all valid words, let user decide)
+
+## Code Style
+
+- Use TypeScript with strict typing
+- Prefer functional programming patterns
+- Keep functions focused and single-purpose
+- Use descriptive variable names
+- Add comments for complex logic, but keep code self-documenting
+
+## OCR System Architecture
+
+The OCR system (`lib/ocr-v2.ts`) uses a multi-strategy approach:
+1. Detects individual tile regions first (grid-based detection)
+2. Preprocesses each region separately (contrast, binary, adaptive, original)
+3. Runs OCR on each tile with optimized settings (PSM 7 and 8)
+4. Tries multiple strategies and picks the best result
+
+When improving OCR:
+- Focus on preprocessing algorithms in `lib/tile-detector.ts`
+- Adjust OCR parameters (PSM modes, confidence thresholds)
+- Improve region detection accuracy
+- Enhance image scaling and quality
+- Never add post-processing corrections
+
+## Testing Approach
+
+- Test with real puzzle images
+- Verify all 20 tiles are extracted correctly
+- Check that 3-character tiles aren't truncated to 2 characters
+- Ensure tiles are processed in correct order (top-to-bottom, left-to-right)
+
+## Common Pitfalls to Avoid
+
+1. **Don't add character substitution maps** - Fix OCR accuracy instead
+2. **Don't truncate long results** - If OCR reads 3 chars when it should be 2, improve OCR
+3. **Don't add length-based filtering** - Let OCR confidence determine results
+4. **Don't add "common misread" corrections** - Improve preprocessing instead
+5. **Don't add substring extraction** - Fix the root cause of why full text isn't detected
+
+## When You Encounter OCR Issues
+
+If tiles are misread:
+1. Check preprocessing quality (contrast, binary thresholding)
+2. Verify region detection is accurate (not cutting off characters)
+3. Try different PSM modes (already implemented)
+4. Adjust scaling parameters if tiles are too small
+5. Improve image quality through better preprocessing algorithms
+
+**Never** add a workaround to "fix" the misread - always improve the OCR pipeline itself.
+

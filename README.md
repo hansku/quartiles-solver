@@ -158,6 +158,19 @@ Dictionaries are loaded on-demand and cached in memory for performance.
 
 Pull requests welcome! This is a vibe-coded project, so keep it simple and focused.
 
+### Development Principles
+
+**CRITICAL RULE: NO WORKAROUNDS, NO FALLBACKS, NO HARDCODED SOLUTIONS**
+
+When fixing bugs or improving OCR accuracy:
+- ❌ **DO NOT** add post-processing corrections for specific misreads
+- ❌ **DO NOT** add hardcoded mappings or character substitutions
+- ❌ **DO NOT** add fallback logic that masks root causes
+- ✅ **DO** fix the root cause: improve preprocessing, OCR parameters, or image quality
+- ✅ **DO** improve actual OCR accuracy rather than patching results
+
+If OCR misreads characters, the solution is to improve the OCR pipeline (preprocessing, scaling, PSM modes, etc.), not to add workarounds that hide the problem.
+
 ## 📄 License
 
 Distributed under the MIT License. See `LICENSE` for more information.

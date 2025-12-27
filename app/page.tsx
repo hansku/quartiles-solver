@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { extractTilesFromImage } from '@/lib/ocr';
 import { solveQuartiles, WordResult } from '@/lib/solver';
 import { DictionaryType } from '@/lib/dictionary';
+import type { DebugImage } from '@/lib/tile-detector';
 
 export default function Home() {
   const [tiles, setTiles] = useState<string[]>([]);
@@ -18,24 +19,54 @@ export default function Home() {
   const [minLength, setMinLength] = useState(2);
   const [psmMode, setPsmMode] = useState(6);
   const [error, setError] = useState<string>('');
+  const [imagePreview, setImagePreview] = useState<string>('');
+  const [ocrStatus, setOcrStatus] = useState<string>('');
+  const [showDebug, setShowDebug] = useState(false);
+  const [debugImages, setDebugImages] = useState<DebugImage[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    // Clean up previous preview URL
+    if (imagePreview) {
+      URL.revokeObjectURL(imagePreview);
+    }
+
+    // Create preview URL
+    const previewUrl = URL.createObjectURL(file);
+    setImagePreview(previewUrl);
+
     setLoading(true);
     setError('');
+    setOcrStatus('Starting OCR...');
     
     try {
-      const extractedTiles = await extractTilesFromImage(file, psmMode);
-      if (extractedTiles.length === 0) {
+      setOcrStatus('Detecting tile regions...');
+      const result = await extractTilesFromImage(
+        file, 
+        psmMode,
+        5, // expectedRows
+        4, // expectedCols
+        showDebug // enableDebug
+      );
+      if (result.tiles.length === 0) {
         setError('No tiles found in the image. Try a different PSM mode or use manual entry.');
+        setOcrStatus('');
       } else {
-        setTiles(extractedTiles);
+        setTiles(result.tiles);
+        // Prefill manual entry box with detected tiles for easy editing
+        setManualTiles(result.tiles.join(' '));
+        setOcrStatus(`✓ Successfully extracted ${result.tiles.length} tiles using ${result.method}`);
+        // Set debug images if available
+        if (result.debugImages) {
+          setDebugImages(result.debugImages);
+        }
       }
     } catch (err) {
       setError(`OCR failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      setOcrStatus('');
     } finally {
       setLoading(false);
     }
@@ -78,6 +109,15 @@ export default function Home() {
     }
   };
 
+  // Cleanup image preview URL on unmount
+  useEffect(() => {
+    return () => {
+      if (imagePreview) {
+        URL.revokeObjectURL(imagePreview);
+      }
+    };
+  }, [imagePreview]);
+
   const formatTilesGrid = (tiles: string[]) => {
     const cols = 4;
     const rows: string[][] = [];
@@ -111,7 +151,7 @@ export default function Home() {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Upload Puzzle Image
               </label>
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-4 mb-4">
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -135,7 +175,36 @@ export default function Home() {
                   <option value={4}>PSM 4 (Single Column)</option>
                   <option value={11}>PSM 11 (Sparse Text)</option>
                 </select>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={showDebug}
+                    onChange={(e) => setShowDebug(e.target.checked)}
+                    className="rounded"
+                  />
+                  <span>Debug Images</span>
+                </label>
               </div>
+              {imagePreview && (
+                <div className="mt-4 border border-gray-200 rounded-lg overflow-hidden bg-gray-50">
+                  <img
+                    src={imagePreview}
+                    alt="Uploaded puzzle"
+                    className="w-full h-auto max-h-64 object-contain"
+                    style={{ imageRendering: 'crisp-edges' }}
+                  />
+                </div>
+              )}
+              {ocrStatus && (
+                <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    {loading && (
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                    )}
+                    <span className="text-sm text-blue-700 font-medium">{ocrStatus}</span>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Manual Entry */}
@@ -243,6 +312,43 @@ export default function Home() {
           </div>
         </div>
 
+        {/* Debug Images Section */}
+        {showDebug && debugImages.length > 0 && (
+          <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
+            <h2 className="text-2xl font-semibold mb-4 text-gray-800">Debug: Image Processing Steps</h2>
+            <div className="space-y-6">
+              {Array.from({ length: 20 }, (_, tileIdx) => {
+                const tileDebugImages = debugImages.filter(img => img.tileIndex === tileIdx);
+                if (tileDebugImages.length === 0) return null;
+                
+                return (
+                  <div key={tileIdx} className="border border-gray-200 rounded-lg p-4">
+                    <h3 className="text-lg font-semibold mb-3 text-gray-700">
+                      Tile {tileIdx + 1} {tiles[tileIdx] && `(detected: "${tiles[tileIdx]}")`}
+                    </h3>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      {tileDebugImages.map((img, idx) => (
+                        <div key={idx} className="space-y-2">
+                          <div className="border border-gray-300 rounded overflow-hidden bg-gray-50">
+                            <img
+                              src={img.imageData}
+                              alt={img.description}
+                              className="w-full h-auto"
+                              style={{ imageRendering: 'pixelated' }}
+                            />
+                          </div>
+                          <p className="text-xs text-gray-600 font-mono">{img.step}</p>
+                          <p className="text-xs text-gray-500">{img.description}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Results Section */}
         {totalFound > 0 && (
           <div className="bg-white rounded-xl shadow-lg p-6">
@@ -263,33 +369,42 @@ export default function Home() {
               const tileResults = results[numTiles] || [];
               if (tileResults.length === 0) return null;
 
-              const maxWidth = Math.max(
-                ...tileResults.map(r => r.tiles.join(' + ').length),
-                20
-              );
-
               return (
-                <div key={numTiles} className="mb-6">
+                <div key={numTiles} className="mb-8">
                   <h3 className="text-xl font-semibold mb-3 text-gray-700">
                     {numTiles} Tile Combination{numTiles > 1 ? 's' : ''} ({tileResults.length})
                   </h3>
-                  <div className="bg-gray-50 rounded-lg p-4 max-h-96 overflow-y-auto">
-                    <div className="space-y-1 font-mono text-sm">
+                  <div className="bg-gray-50 rounded-lg p-4">
+                    <div 
+                      className={`font-mono text-sm gap-6 ${
+                        numTiles === 4 
+                          ? 'columns-1' 
+                          : 'columns-1 sm:columns-2 md:columns-3 lg:columns-4'
+                      }`}
+                      style={{ columnFill: 'balance' }}
+                    >
                       {tileResults.map((result, idx) => {
                         const leftSide = result.tiles.join(' + ');
                         const hasTags = result.tags.length > 0;
                         return (
                           <div
                             key={idx}
-                            className={`flex items-center gap-2 py-1 ${
+                            className={`py-0.5 break-inside-avoid whitespace-nowrap flex ${
                               hasTags ? 'text-amber-700' : 'text-gray-800'
                             }`}
                           >
-                            <span className="text-gray-500 w-48 text-right">{leftSide}</span>
-                            <span className="text-gray-400">=</span>
+                            <span 
+                              className="text-gray-500 text-right"
+                              style={{ 
+                                minWidth: numTiles === 1 ? '2.5rem' : numTiles === 2 ? '5.5rem' : numTiles === 3 ? '9rem' : '12.5rem'
+                              }}
+                            >
+                              {leftSide}
+                            </span>
+                            <span className="text-gray-400 mx-1">=</span>
                             <span className="font-semibold">{result.word}</span>
                             {hasTags && (
-                              <span className="text-xs text-amber-600 ml-2">
+                              <span className="text-xs text-amber-600 ml-1">
                                 [{result.tags.join(', ')}]
                               </span>
                             )}
