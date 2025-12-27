@@ -1,9 +1,8 @@
 /**
- * Improved OCR system that:
- * 1. Detects individual tile regions first
- * 2. Preprocesses each region separately
- * 3. Runs OCR on each tile with optimized settings
- * 4. Tries multiple strategies and picks the best result
+ * Optimized OCR system with:
+ * 1. Worker pool for parallel processing
+ * 2. Early exit on high confidence results
+ * 3. Efficient strategy ordering
  * 
  * CRITICAL RULE: NO WORKAROUNDS, NO FALLBACKS, NO HARDCODED SOLUTIONS
  * - Do not add post-processing corrections for specific misreads
@@ -13,7 +12,7 @@
  * - If OCR misreads, improve the actual OCR accuracy, don't patch the results
  */
 
-import { createWorker } from 'tesseract.js';
+import { createWorker, Worker } from 'tesseract.js';
 import {
   detectTileRegions,
   preprocessImage,
@@ -31,6 +30,7 @@ interface OCRStrategy {
   confidenceThreshold: number;
 }
 
+// Ordered by effectiveness - most reliable strategies first
 const STRATEGIES: OCRStrategy[] = [
   // Binary preprocessing first (pure black/white) - often best for character recognition
   { name: 'binary-psm7', preprocessing: 'binary', psmMode: 7, confidenceThreshold: 5 },
@@ -45,6 +45,64 @@ const STRATEGIES: OCRStrategy[] = [
   { name: 'original-psm8', preprocessing: 'original', psmMode: 8, confidenceThreshold: 5 },
 ];
 
+// High confidence threshold - if we exceed this, skip remaining strategies for the tile
+const HIGH_CONFIDENCE_THRESHOLD = 80;
+
+// Number of workers in the pool
+const WORKER_POOL_SIZE = 4;
+
+/**
+ * Worker pool for efficient OCR processing
+ */
+class WorkerPool {
+  private workers: Worker[] = [];
+  private available: Worker[] = [];
+  private waiting: ((worker: Worker) => void)[] = [];
+  private initialized = false;
+
+  async initialize(size: number = WORKER_POOL_SIZE): Promise<void> {
+    if (this.initialized) return;
+    
+    console.log(`Initializing worker pool with ${size} workers...`);
+    const startTime = performance.now();
+    
+    // Create all workers in parallel
+    this.workers = await Promise.all(
+      Array(size).fill(0).map(() => createWorker('eng'))
+    );
+    this.available = [...this.workers];
+    this.initialized = true;
+    
+    console.log(`Worker pool initialized in ${(performance.now() - startTime).toFixed(0)}ms`);
+  }
+
+  async acquire(): Promise<Worker> {
+    if (this.available.length > 0) {
+      return this.available.pop()!;
+    }
+    
+    // Wait for a worker to become available
+    return new Promise((resolve) => {
+      this.waiting.push(resolve);
+    });
+  }
+
+  release(worker: Worker): void {
+    if (this.waiting.length > 0) {
+      const resolve = this.waiting.shift()!;
+      resolve(worker);
+    } else {
+      this.available.push(worker);
+    }
+  }
+
+  async terminate(): Promise<void> {
+    await Promise.all(this.workers.map(w => w.terminate()));
+    this.workers = [];
+    this.available = [];
+    this.initialized = false;
+  }
+}
 
 /**
  * Convert canvas to data URL for debugging
@@ -54,237 +112,202 @@ function canvasToDataUrl(canvas: HTMLCanvasElement): string {
 }
 
 /**
- * OCR a single tile region - returns text and confidence
+ * Prepare a tile region for OCR - extract, scale, and preprocess
  */
-async function ocrTileRegionWithConfidence(
-  worker: any,
+function prepareTileForOCR(
   canvas: HTMLCanvasElement,
   region: TileRegion,
   strategy: OCRStrategy,
   tileIndex: number,
   debugImages?: DebugImage[]
-): Promise<{ text: string | null; confidence: number }> {
-  try {
-    // Extract the region - use minimal crop to avoid reading adjacent tiles
-    // Reduce crop to preserve full characters, especially for 3-4 char tiles
-    const crop = 1;
-    const croppedRegion: TileRegion = {
-      x: Math.max(0, region.x + crop),
-      y: Math.max(0, region.y + crop),
-      width: Math.max(1, Math.min(canvas.width - (region.x + crop), region.width - crop * 2)),
-      height: Math.max(1, Math.min(canvas.height - (region.y + crop), region.height - crop * 2)),
-    };
-    
-    const regionCanvas = extractRegion(canvas, croppedRegion);
-    
-    // Debug: capture original region
-    if (debugImages) {
-      debugImages.push({
-        tileIndex,
-        step: 'original-region',
-        imageData: canvasToDataUrl(regionCanvas),
-        description: `Original region (${regionCanvas.width}x${regionCanvas.height}px)`
-      });
-    }
-    
-    // Scale to optimal size for OCR - Tesseract works best around 200-300 DPI
-    // Scale up if too small, scale down if too large
-    let finalCanvas = regionCanvas;
-    const minSize = 150; // Minimum size for reliable OCR
-    const maxSize = 300; // Maximum size - larger images can reduce OCR accuracy
-    const optimalSize = 250; // Target size for best OCR accuracy
-    
-    const currentMin = Math.min(regionCanvas.width, regionCanvas.height);
-    const currentMax = Math.max(regionCanvas.width, regionCanvas.height);
-    
-    if (currentMin < minSize) {
-      // Scale up if too small
-      const scale = Math.min(5, minSize / currentMin);
-      const scaledCanvas = document.createElement('canvas');
-      scaledCanvas.width = Math.round(regionCanvas.width * scale);
-      scaledCanvas.height = Math.round(regionCanvas.height * scale);
-      const ctx = scaledCanvas.getContext('2d');
-      if (ctx) {
-        // Nearest neighbor scaling - preserves letter shapes exactly
-        ctx.imageSmoothingEnabled = false;
-        ctx.drawImage(regionCanvas, 0, 0, scaledCanvas.width, scaledCanvas.height);
-        finalCanvas = scaledCanvas;
-        // Debug: capture scaled up
-        if (debugImages) {
-          debugImages.push({
-            tileIndex,
-            step: 'scaled-up',
-            imageData: canvasToDataUrl(finalCanvas),
-            description: `Scaled up ${scale.toFixed(2)}x (${finalCanvas.width}x${finalCanvas.height}px)`
-          });
-        }
-      }
-    } else if (currentMax > maxSize) {
-      // Scale down if too large - use bilinear for downscaling to avoid aliasing
-      const scale = optimalSize / currentMax;
-      const scaledCanvas = document.createElement('canvas');
-      scaledCanvas.width = Math.round(regionCanvas.width * scale);
-      scaledCanvas.height = Math.round(regionCanvas.height * scale);
-      const ctx = scaledCanvas.getContext('2d');
-      if (ctx) {
-        // Bilinear scaling for downscaling - smoother results
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(regionCanvas, 0, 0, scaledCanvas.width, scaledCanvas.height);
-        finalCanvas = scaledCanvas;
-        // Debug: capture scaled down
-        if (debugImages) {
-          debugImages.push({
-            tileIndex,
-            step: 'scaled-down',
-            imageData: canvasToDataUrl(finalCanvas),
-            description: `Scaled down ${scale.toFixed(2)}x (${finalCanvas.width}x${finalCanvas.height}px)`
-          });
-        }
-      }
-    } else if (debugImages) {
-      // Debug: capture if no scaling needed
-      debugImages.push({
-        tileIndex,
-        step: 'no-scaling',
-        imageData: canvasToDataUrl(finalCanvas),
-        description: `No scaling needed (${finalCanvas.width}x${finalCanvas.height}px)`
-      });
-    }
-    
-    // Preprocess the region
-    const processed = preprocessImage(finalCanvas, strategy.preprocessing);
-    
-    // Debug: capture preprocessed image
-    if (debugImages) {
-      debugImages.push({
-        tileIndex,
-        step: `preprocessed-${strategy.preprocessing}`,
-        imageData: canvasToDataUrl(processed),
-        description: `Preprocessed: ${strategy.preprocessing} (PSM ${strategy.psmMode})`
-      });
-    }
-    
-    // Set OCR parameters - match the working test page exactly
-    await worker.setParameters({
-      tessedit_pageseg_mode: strategy.psmMode,
-      tessedit_char_whitelist: 'abcdefghijklmnopqrstuvwxyz',
-      tessedit_ocr_engine_mode: '1',
-      load_system_dawg: '0',
-      load_freq_dawg: '0',
-      load_unambig_dawg: '0',
-      load_punc_dawg: '0',
-      load_number_dawg: '0',
-      load_bigram_dawg: '0',
-    } as any);
-    
-    // Run OCR
-    const { data } = await worker.recognize(processed);
-    
-    // Get all text - try multiple sources, be very permissive
-    const fullText = (data.text || '').trim().toLowerCase();
-    const words = data.words || [];
-    const lines = data.lines || [];
-    const symbols = data.symbols || [];
-    
-    // Collect all candidates - be very permissive
-    const candidates: Array<{ text: string; conf: number }> = [];
-    
-    // From full text (most reliable)
-    if (fullText) {
-      const cleaned = fullText.replace(/[^a-z]/g, '').trim();
-      if (cleaned.length >= 2 && cleaned.length <= 10) {
-        candidates.push({ text: cleaned, conf: 60 });
-      }
-    }
-    
-    // From lines
-    for (const line of lines) {
-      const text = (line.text || '').trim().toLowerCase();
-      if (text) {
-        const cleaned = text.replace(/[^a-z]/g, '').trim();
-        if (cleaned.length >= 2 && cleaned.length <= 10) {
-          candidates.push({ text: cleaned, conf: line.confidence || 50 });
-        }
-      }
-    }
-    
-    // From words (accept any confidence)
-    for (const word of words) {
-      const text = (word.text || '').trim().toLowerCase();
-      if (text) {
-        const cleaned = text.replace(/[^a-z]/g, '').trim();
-        if (cleaned.length >= 2 && cleaned.length <= 10) {
-          candidates.push({ text: cleaned, conf: word.confidence || 30 });
-        }
-      }
-    }
-    
-    // From symbols (assemble characters) - CRITICAL for accurate character detection
-    // This is the most reliable source for short tiles (2-3 chars)
-    // Use simple processing that matches the working test page exactly
-    const sortedSymbols = [...symbols]
-      .filter(s => /^[a-z]$/.test((s.text || '').trim().toLowerCase()))
-      .sort((a, b) => (a.bbox?.x0 || 0) - (b.bbox?.x0 || 0));
-    
-    // Build symbol text directly - trust OCR output without complex alternative checking
-    let symbolText = '';
-    let symbolConfSum = 0;
-    const symbolConfs: number[] = [];
-    
-    for (const symbol of sortedSymbols) {
-      const text = (symbol.text || '').trim().toLowerCase();
-      const conf = symbol.confidence || 0;
-      symbolText += text;
-      symbolConfSum += conf;
-      symbolConfs.push(conf);
-    }
-    
-    if (symbolText.length >= 2 && symbolText.length <= 10) {
-      const avgConf = symbolConfs.length > 0 ? symbolConfSum / symbolConfs.length : 35;
-      // Calculate quality score: average confidence + bonus for consistent high confidence
-      const minConf = symbolConfs.length > 0 ? Math.min(...symbolConfs) : 0;
-      const qualityBonus = minConf > 40 ? 20 : minConf > 30 ? 10 : 0;
-      
-      // Very high boost for symbol-based results - they're most accurate for character recognition
-      const boostedConf = symbolText.length <= 3 
-        ? avgConf + 40 + qualityBonus  // Very high boost for 2-3 char tiles
-        : avgConf + 25 + qualityBonus; // High boost for longer tiles
-      
-      candidates.push({ text: symbolText, conf: boostedConf });
-    }
-    
-    // CRITICAL: If we have a symbol-based result, ALWAYS use it
-    // Symbol-based results are character-level and most accurate for short tiles
-    // This matches exactly what the working test page does
-    if (symbolText.length >= 2) {
-      const avgConf = symbolConfs.length > 0 ? symbolConfSum / symbolConfs.length : 50;
-      return { text: symbolText, confidence: avgConf };
-    }
-    
-    // Fallback: if no symbol result, use best candidate from fullText/words/lines
-    if (candidates.length > 0) {
-      // Remove duplicates, keeping highest confidence
-      const unique = new Map<string, number>();
-      for (const cand of candidates) {
-        const existing = unique.get(cand.text);
-        if (!existing || cand.conf > existing) {
-          unique.set(cand.text, cand.conf);
-        }
-      }
-      
-      const uniqueCandidates = Array.from(unique.entries())
-        .map(([text, conf]) => ({ text, conf }))
-        .sort((a, b) => b.conf - a.conf);
-      
-      return { text: uniqueCandidates[0].text, confidence: uniqueCandidates[0].conf };
-    }
-    
-    return { text: null, confidence: 0 };
-  } catch (error) {
-    console.warn(`OCR failed for region ${region.x},${region.y}:`, error);
-    return { text: null, confidence: 0 };
+): HTMLCanvasElement {
+  // Extract the region - use minimal crop to avoid reading adjacent tiles
+  const crop = 1;
+  const croppedRegion: TileRegion = {
+    x: Math.max(0, region.x + crop),
+    y: Math.max(0, region.y + crop),
+    width: Math.max(1, Math.min(canvas.width - (region.x + crop), region.width - crop * 2)),
+    height: Math.max(1, Math.min(canvas.height - (region.y + crop), region.height - crop * 2)),
+  };
+  
+  const regionCanvas = extractRegion(canvas, croppedRegion);
+  
+  // Debug: capture original region
+  if (debugImages) {
+    debugImages.push({
+      tileIndex,
+      step: 'original-region',
+      imageData: canvasToDataUrl(regionCanvas),
+      description: `Original region (${regionCanvas.width}x${regionCanvas.height}px)`
+    });
   }
+  
+  // Scale to optimal size for OCR
+  let finalCanvas = regionCanvas;
+  const minSize = 150;
+  const maxSize = 300;
+  const optimalSize = 250;
+  
+  const currentMin = Math.min(regionCanvas.width, regionCanvas.height);
+  const currentMax = Math.max(regionCanvas.width, regionCanvas.height);
+  
+  if (currentMin < minSize) {
+    const scale = Math.min(5, minSize / currentMin);
+    const scaledCanvas = document.createElement('canvas');
+    scaledCanvas.width = Math.round(regionCanvas.width * scale);
+    scaledCanvas.height = Math.round(regionCanvas.height * scale);
+    const ctx = scaledCanvas.getContext('2d');
+    if (ctx) {
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(regionCanvas, 0, 0, scaledCanvas.width, scaledCanvas.height);
+      finalCanvas = scaledCanvas;
+      if (debugImages) {
+        debugImages.push({
+          tileIndex,
+          step: 'scaled-up',
+          imageData: canvasToDataUrl(finalCanvas),
+          description: `Scaled up ${scale.toFixed(2)}x (${finalCanvas.width}x${finalCanvas.height}px)`
+        });
+      }
+    }
+  } else if (currentMax > maxSize) {
+    const scale = optimalSize / currentMax;
+    const scaledCanvas = document.createElement('canvas');
+    scaledCanvas.width = Math.round(regionCanvas.width * scale);
+    scaledCanvas.height = Math.round(regionCanvas.height * scale);
+    const ctx = scaledCanvas.getContext('2d');
+    if (ctx) {
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(regionCanvas, 0, 0, scaledCanvas.width, scaledCanvas.height);
+      finalCanvas = scaledCanvas;
+      if (debugImages) {
+        debugImages.push({
+          tileIndex,
+          step: 'scaled-down',
+          imageData: canvasToDataUrl(finalCanvas),
+          description: `Scaled down ${scale.toFixed(2)}x (${finalCanvas.width}x${finalCanvas.height}px)`
+        });
+      }
+    }
+  } else if (debugImages) {
+    debugImages.push({
+      tileIndex,
+      step: 'no-scaling',
+      imageData: canvasToDataUrl(finalCanvas),
+      description: `No scaling needed (${finalCanvas.width}x${finalCanvas.height}px)`
+    });
+  }
+  
+  // Preprocess the region
+  const processed = preprocessImage(finalCanvas, strategy.preprocessing);
+  
+  if (debugImages) {
+    debugImages.push({
+      tileIndex,
+      step: `preprocessed-${strategy.preprocessing}`,
+      imageData: canvasToDataUrl(processed),
+      description: `Preprocessed: ${strategy.preprocessing} (PSM ${strategy.psmMode})`
+    });
+  }
+  
+  return processed;
+}
+
+/**
+ * Parse OCR result to extract text and confidence
+ */
+function parseOCRResult(data: any): { text: string | null; confidence: number } {
+  const fullText = (data.text || '').trim().toLowerCase();
+  const words = data.words || [];
+  const lines = data.lines || [];
+  const symbols = data.symbols || [];
+  
+  // Collect all candidates
+  const candidates: Array<{ text: string; conf: number }> = [];
+  
+  // From full text
+  if (fullText) {
+    const cleaned = fullText.replace(/[^a-z]/g, '').trim();
+    if (cleaned.length >= 2 && cleaned.length <= 10) {
+      candidates.push({ text: cleaned, conf: 60 });
+    }
+  }
+  
+  // From lines
+  for (const line of lines) {
+    const text = (line.text || '').trim().toLowerCase();
+    if (text) {
+      const cleaned = text.replace(/[^a-z]/g, '').trim();
+      if (cleaned.length >= 2 && cleaned.length <= 10) {
+        candidates.push({ text: cleaned, conf: line.confidence || 50 });
+      }
+    }
+  }
+  
+  // From words
+  for (const word of words) {
+    const text = (word.text || '').trim().toLowerCase();
+    if (text) {
+      const cleaned = text.replace(/[^a-z]/g, '').trim();
+      if (cleaned.length >= 2 && cleaned.length <= 10) {
+        candidates.push({ text: cleaned, conf: word.confidence || 30 });
+      }
+    }
+  }
+  
+  // From symbols - most reliable for short tiles
+  const sortedSymbols = [...symbols]
+    .filter(s => /^[a-z]$/.test((s.text || '').trim().toLowerCase()))
+    .sort((a, b) => (a.bbox?.x0 || 0) - (b.bbox?.x0 || 0));
+  
+  let symbolText = '';
+  let symbolConfSum = 0;
+  const symbolConfs: number[] = [];
+  
+  for (const symbol of sortedSymbols) {
+    const text = (symbol.text || '').trim().toLowerCase();
+    const conf = symbol.confidence || 0;
+    symbolText += text;
+    symbolConfSum += conf;
+    symbolConfs.push(conf);
+  }
+  
+  if (symbolText.length >= 2 && symbolText.length <= 10) {
+    const avgConf = symbolConfs.length > 0 ? symbolConfSum / symbolConfs.length : 35;
+    const minConf = symbolConfs.length > 0 ? Math.min(...symbolConfs) : 0;
+    const qualityBonus = minConf > 40 ? 20 : minConf > 30 ? 10 : 0;
+    const boostedConf = symbolText.length <= 3 
+      ? avgConf + 40 + qualityBonus
+      : avgConf + 25 + qualityBonus;
+    
+    candidates.push({ text: symbolText, conf: boostedConf });
+  }
+  
+  // Prefer symbol-based results for short tiles
+  if (symbolText.length >= 2) {
+    const avgConf = symbolConfs.length > 0 ? symbolConfSum / symbolConfs.length : 50;
+    return { text: symbolText, confidence: avgConf };
+  }
+  
+  // Fallback to best candidate
+  if (candidates.length > 0) {
+    const unique = new Map<string, number>();
+    for (const cand of candidates) {
+      const existing = unique.get(cand.text);
+      if (!existing || cand.conf > existing) {
+        unique.set(cand.text, cand.conf);
+      }
+    }
+    
+    const uniqueCandidates = Array.from(unique.entries())
+      .map(([text, conf]) => ({ text, conf }))
+      .sort((a, b) => b.conf - a.conf);
+    
+    return { text: uniqueCandidates[0].text, confidence: uniqueCandidates[0].conf };
+  }
+  
+  return { text: null, confidence: 0 };
 }
 
 /**
@@ -297,36 +320,58 @@ interface TileResult {
 }
 
 /**
- * Try a single strategy on all tile regions
- * Creates a new worker for EACH tile to avoid state persistence issues
- * Returns results with confidence scores for per-tile comparison
+ * OCR a single tile with a worker
  */
-async function tryStrategy(
-  canvas: HTMLCanvasElement,
-  regions: TileRegion[],
-  strategy: OCRStrategy,
-  debugImages?: DebugImage[]
-): Promise<TileResult[]> {
-  const results: TileResult[] = [];
-  
-  // Process each tile with a fresh worker to avoid state persistence
-  // This matches how the test page works and ensures consistent OCR results
-  for (let i = 0; i < regions.length; i++) {
-    const worker = await createWorker('eng');
-    try {
-      const region = regions[i];
-      const { text, confidence } = await ocrTileRegionWithConfidence(worker, canvas, region, strategy, i, debugImages);
-      results.push({ text, confidence, strategy: strategy.name });
-    } finally {
-      await worker.terminate();
-    }
+async function ocrTile(
+  worker: Worker,
+  processedCanvas: HTMLCanvasElement,
+  strategy: OCRStrategy
+): Promise<{ text: string | null; confidence: number }> {
+  try {
+    // Set OCR parameters (only runtime-changeable ones)
+    await worker.setParameters({
+      tessedit_pageseg_mode: strategy.psmMode,
+      tessedit_char_whitelist: 'abcdefghijklmnopqrstuvwxyz',
+    } as any);
+    
+    const { data } = await worker.recognize(processedCanvas);
+    return parseOCRResult(data);
+  } catch (error) {
+    console.warn('OCR failed:', error);
+    return { text: null, confidence: 0 };
   }
-  
+}
+
+/**
+ * Process a batch of tiles in parallel using the worker pool
+ */
+async function processTilesBatch(
+  pool: WorkerPool,
+  tiles: Array<{
+    index: number;
+    canvas: HTMLCanvasElement;
+    strategy: OCRStrategy;
+  }>
+): Promise<Array<{ index: number; result: TileResult }>> {
+  const results = await Promise.all(
+    tiles.map(async (tile) => {
+      const worker = await pool.acquire();
+      try {
+        const { text, confidence } = await ocrTile(worker, tile.canvas, tile.strategy);
+        return {
+          index: tile.index,
+          result: { text, confidence, strategy: tile.strategy.name }
+        };
+      } finally {
+        pool.release(worker);
+      }
+    })
+  );
   return results;
 }
 
 /**
- * Main extraction function - tries multiple strategies and picks BEST result for EACH tile
+ * Main extraction function - optimized with worker pool and early exit
  */
 export async function extractTilesFromImage(
   imageFile: File,
@@ -335,6 +380,8 @@ export async function extractTilesFromImage(
   expectedCols: number = 4,
   enableDebug: boolean = false
 ): Promise<DetectionResult> {
+  const totalStartTime = performance.now();
+  
   // Load the image
   const canvas = await loadImageToCanvas(imageFile);
   
@@ -345,77 +392,100 @@ export async function extractTilesFromImage(
     return { tiles: [], regions: [], method: 'none' };
   }
   
-  // Collect results from ALL strategies for EACH tile position
-  // Structure: perTileResults[tileIndex] = array of results from different strategies
-  const perTileResults: TileResult[][] = regions.map(() => []);
-  const allDebugImages: DebugImage[] = [];
+  // Initialize worker pool
+  const pool = new WorkerPool();
+  await pool.initialize(WORKER_POOL_SIZE);
   
-  for (const strategy of STRATEGIES) {
-    try {
-      const strategyDebugImages: DebugImage[] = [];
-      const strategyResults = await tryStrategy(
-        canvas, 
-        regions, 
-        strategy, 
-        enableDebug ? strategyDebugImages : undefined
-      );
-      
-      // Add each tile's result to the per-tile collection
-      for (let i = 0; i < strategyResults.length; i++) {
-        perTileResults[i].push(strategyResults[i]);
+  try {
+    // Track best results per tile and whether tile is "done" (high confidence)
+    const bestResults: (TileResult | null)[] = new Array(regions.length).fill(null);
+    const tilesDone: boolean[] = new Array(regions.length).fill(false);
+    const allDebugImages: DebugImage[] = [];
+    
+    // Process strategies in order
+    for (const strategy of STRATEGIES) {
+      // Find tiles that still need processing
+      const tilesToProcess: number[] = [];
+      for (let i = 0; i < regions.length; i++) {
+        if (!tilesDone[i]) {
+          tilesToProcess.push(i);
+        }
       }
       
-      if (enableDebug) {
-        allDebugImages.push(...strategyDebugImages);
+      // Skip strategy if all tiles are done
+      if (tilesToProcess.length === 0) {
+        console.log(`Skipping ${strategy.name} - all tiles have high confidence results`);
+        break;
       }
-    } catch (error) {
-      console.warn(`Strategy ${strategy.name} failed:`, error);
+      
+      console.log(`Running ${strategy.name} on ${tilesToProcess.length} tiles...`);
+      const strategyStartTime = performance.now();
+      
+      // Prepare all tiles for this strategy
+      const preparedTiles = tilesToProcess.map(tileIndex => ({
+        index: tileIndex,
+        canvas: prepareTileForOCR(
+          canvas,
+          regions[tileIndex],
+          strategy,
+          tileIndex,
+          enableDebug ? allDebugImages : undefined
+        ),
+        strategy
+      }));
+      
+      // Process tiles in parallel using worker pool
+      const strategyResults = await processTilesBatch(pool, preparedTiles);
+      
+      // Update best results
+      for (const { index, result } of strategyResults) {
+        const currentBest = bestResults[index];
+        
+        // Update if this result is better
+        if (result.text && (!currentBest || !currentBest.text || result.confidence > currentBest.confidence)) {
+          bestResults[index] = result;
+          
+          // Mark tile as done if high confidence
+          if (result.confidence >= HIGH_CONFIDENCE_THRESHOLD) {
+            tilesDone[index] = true;
+          }
+        }
+      }
+      
+      console.log(`${strategy.name} completed in ${(performance.now() - strategyStartTime).toFixed(0)}ms`);
     }
+    
+    // Collect final results
+    const finalTiles: string[] = [];
+    const usedStrategies: string[] = [];
+    
+    for (let i = 0; i < regions.length; i++) {
+      const best = bestResults[i];
+      if (best?.text) {
+        finalTiles.push(best.text);
+        usedStrategies.push(best.strategy);
+      }
+    }
+    
+    // Log stats
+    const strategyUsage = usedStrategies.reduce((acc, s) => {
+      acc[s] = (acc[s] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    console.log('Strategy usage per tile:', strategyUsage);
+    console.log('Detected tiles:', finalTiles);
+    console.log(`Total time: ${(performance.now() - totalStartTime).toFixed(0)}ms`);
+    
+    return {
+      tiles: finalTiles,
+      regions,
+      method: 'per-tile-best-optimized',
+      debugImages: enableDebug ? allDebugImages : undefined
+    };
+  } finally {
+    // Always terminate the worker pool
+    await pool.terminate();
   }
-  
-  // For EACH tile, pick the BEST result across all strategies
-  const finalTiles: string[] = [];
-  const usedStrategies: string[] = [];
-  
-  for (let i = 0; i < regions.length; i++) {
-    const tileResults = perTileResults[i];
-    
-    if (tileResults.length === 0) {
-      continue;
-    }
-    
-    // Filter to results that have text
-    const validResults = tileResults.filter(r => r.text !== null);
-    
-    if (validResults.length === 0) {
-      continue;
-    }
-    
-    // Sort by confidence (highest first)
-    validResults.sort((a, b) => b.confidence - a.confidence);
-    
-    // Pick the best result for this tile
-    const best = validResults[0];
-    if (best.text) {
-      finalTiles.push(best.text);
-      usedStrategies.push(best.strategy);
-    }
-  }
-  
-  // Log which strategies were used
-  const strategyUsage = usedStrategies.reduce((acc, s) => {
-    acc[s] = (acc[s] || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
-  console.log('Strategy usage per tile:', strategyUsage);
-  console.log('Detected tiles:', finalTiles);
-  
-  return {
-    tiles: finalTiles,
-    regions,
-    method: 'per-tile-best',
-    debugImages: enableDebug ? allDebugImages : undefined
-  };
 }
 
 /**
@@ -458,4 +528,3 @@ export async function extractTilesAuto(
   
   return bestResult;
 }
-
